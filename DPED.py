@@ -251,8 +251,11 @@ class DPED(object):
 
     def load(self):
         checkpoint_dir = os.path.join(self.checkpoint_dir, self.dataset_name)
-        ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
         print("Loading checkpoints from ",checkpoint_dir)
+        #model_name = self.config.model_name
+        #self.saver.restore(self.sess, os.path.join(checkpoint_dir, model_name))
+        #return True
+        ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
             ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
             model_name = self.config.model_name
