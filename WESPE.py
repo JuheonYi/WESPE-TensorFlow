@@ -9,6 +9,8 @@ from glob import glob
 from utils import *
 from ops import *
 from vgg19 import *
+from dataloader import *
+import modules
 
 class WESPE(object):
     def __init__(self, sess, config, dataset_phone, dataset_dslr):
@@ -58,60 +60,28 @@ class WESPE(object):
         self.saver = tf.train.Saver(tf.trainable_variables())
 
     def build_generator(self):
-        self.enhanced_patch = self.generator_network(self.phone_patch)
-        self.enhanced_test = self.generator_network(self.phone_test)
-        self.enhanced_test_unknown = self.generator_network(self.phone_test_unknown)
+        self.enhanced_patch = modules.generator_network(self.phone_patch, var_scope = 'generator')
+        self.reconstructed_patch = modules.generator_network(self.enhanced_patch, var_scope = 'generator_inverse')
+        
+        self.enhanced_test = modules.generator_network(self.phone_test, var_scope = 'generator')
+        self.enhanced_test_unknown = modules.generator_network(self.phone_test_unknown, var_scope = 'generator')
         
         variables = tf.trainable_variables()
         self.g_var = [x for x in variables if 'generator' in x.name]
         print("Completed building generator. Number of variables:",len(self.g_var))
         #print(self.g_var)
-        
-    def generator_network(self, image):
-        with tf.variable_scope('generator', reuse=tf.AUTO_REUSE):
-            # conv. layer before residual blocks 
-            b1_in = tf.layers.conv2d(image, 64, 9, strides = 1, padding = 'SAME', name = 'CONV_1', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            b1_in = tf.nn.relu(b1_in)
-            
-            # residual blocks
-            b1_out = self.resblock(b1_in, 1)
-            b2_out = self.resblock(b1_out, 2)
-            b3_out = self.resblock(b2_out, 3)
-            b4_out = self.resblock(b3_out, 4)
-            
-            # conv. layers after residual blocks
-            temp = tf.layers.conv2d(b4_out, 64, 3, strides = 1, padding = 'SAME', name = 'CONV_2', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.nn.relu(temp)
-            temp = tf.layers.conv2d(temp, 64, 3, strides = 1, padding = 'SAME', name = 'CONV_3', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.nn.relu(temp)
-            temp = tf.layers.conv2d(temp, 64, 3, strides = 1, padding = 'SAME', name = 'CONV_4', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.nn.relu(temp)
-            temp = tf.layers.conv2d(temp, 3, 1, strides = 1, padding = 'SAME', name = 'CONV_5', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            return temp
-    
-    def resblock(self, feature_in, num):
-        # subblock (conv. + BN + relu)
-        temp =  tf.layers.conv2d(feature_in, 64, 3, strides = 1, padding = 'SAME', name = ('resblock_%d_CONV_1' %num), kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-        #temp = tf.layers.batch_normalization(temp, name = ('resblock_%d_BN_1' %num))
-        temp = tf.nn.relu(temp)
-        
-        # subblock (conv. + BN + relu)
-        temp =  tf.layers.conv2d(temp, 64, 3, strides = 1, padding = 'SAME', name = ('resblock_%d_CONV_2' %num), kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-        #temp = tf.layers.batch_normalization(temp, name = ('resblock_%d_BN_2' %num))
-        temp = tf.nn.relu(temp)
-        return temp + feature_in
-    
+
     def build_generator_loss(self):
-        # color loss (blur + mse) - since output values are normalized, color loss should be multiplied by 255
-        self.color_loss = 255 * tf.reduce_mean(tf.square(gaussian_blur(self.dslr_patch)-gaussian_blur(self.enhanced_patch)))
+        # content loss (vgg)
+        original_vgg = net(self.vgg_dir, self.phone_patch * 255)
+        reconstructed_vgg = net(self.vgg_dir, self.reconstructed_patch * 255)
+        self.content_loss = tf.reduce_mean(tf.square(original_vgg[self.content_layer] - reconstructed_vgg[self.content_layer])) 
+        
+        # color loss (gan)
+        self.color_loss = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_color, self.logits_enhanced_color))
         
         # texture loss (gan)
-        self.texture_loss = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr, self.logits_enhanced))
-        
-        # content loss (vgg)
-        enhanced_vgg = net(self.vgg_dir, self.enhanced_patch * 255)
-        dslr_vgg = net(self.vgg_dir, self.dslr_patch * 255)
-        self.content_loss = tf.reduce_mean(tf.square(enhanced_vgg[self.content_layer] - dslr_vgg[self.content_layer])) 
+        self.texture_loss = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_texture, self.logits_enhanced_texture))
         
         # tv loss (tv)
         self.tv_loss = tf.reduce_mean(tf.image.total_variation(self.enhanced_patch))
@@ -120,62 +90,35 @@ class WESPE(object):
         self.G_loss = self.color_loss * self.w_color + self.texture_loss * self.w_texture + self.content_loss * self.w_content + self.tv_loss * self.w_tv
         self.G_optimizer = tf.train.AdamOptimizer(self.config.learning_rate).minimize(self.G_loss, var_list=self.g_var)
     
-    def build_discriminator(self):
-        self.logits_phone, _ = self.discriminator_network(self.phone_patch)
-        self.logits_dslr, _ = self.discriminator_network(self.dslr_patch)
-        self.logits_enhanced, _ = self.discriminator_network(self.enhanced_patch)
+    def build_discriminator(self): 
+        self.logits_dslr_color, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        self.logits_dslr_texture, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_texture', preprocess = 'gray')
         
-        _, self.prob = self.discriminator_network(self.phone_test)
+        self.logits_enhanced_color, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        self.logits_enhanced_texture, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_texture', preprocess = 'gray')
+        
+        #_, self.prob = modules.discriminator_network(self.phone_test)
            
         variables = tf.trainable_variables()
-        self.d_var = [x for x in variables if 'discriminator' in x.name]
-        print("Completed building discriminator. Number of variables:",len(self.d_var))
+        self.d_var_color = [x for x in variables if 'discriminator_color' in x.name]
+        print("Completed building color discriminator. Number of variables:",len(self.d_var_color))
         
-        d_loss_real = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr, tf.ones_like(self.logits_dslr)))
-        d_loss_fake = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_phone, tf.zeros_like(self.logits_phone)))
+        d_loss_real_color = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_color, tf.ones_like(self.logits_dslr_color)))
+        d_loss_fake_color = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_enhanced_color, tf.zeros_like(self.logits_enhanced_color)))
         
-        self.d_loss = d_loss_real + d_loss_fake
-        self.D_optimizer = tf.train.AdamOptimizer(self.config.learning_rate).minimize(self.d_loss, var_list=self.d_var)
+        self.d_loss_color = d_loss_real_color + d_loss_fake_color
+        self.D_optimizer_color = tf.train.AdamOptimizer(self.config.learning_rate).minimize(self.d_loss_color, var_list=self.d_var_color)
         
-    def discriminator_network(self, image):
-        with tf.variable_scope('discriminator', reuse = tf.AUTO_REUSE):
-            #convert to grayscale image
-            image_gray = tf.image.rgb_to_grayscale(image)
-            
-            # conv layer 1 
-            temp = tf.layers.conv2d(image_gray, 48, 11, strides = 4, padding = 'SAME', name = 'CONV_1', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = lrelu(temp)
-            
-            # conv layer 2
-            temp = tf.layers.conv2d(temp, 128, 5, strides = 2, padding = 'SAME', name = 'CONV_2', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.layers.batch_normalization(temp, name = 'BN_2')
-            temp = lrelu(temp)
-            
-            # conv layer 3
-            temp = tf.layers.conv2d(temp, 192, 3, strides = 1, padding = 'SAME', name = 'CONV_3', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.layers.batch_normalization(temp, name = 'BN_3')
-            temp = lrelu(temp)
-            
-            # conv layer 4
-            temp = tf.layers.conv2d(temp, 192, 3, strides = 1, padding = 'SAME', name = 'CONV_4', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.layers.batch_normalization(temp, name = 'BN_4')
-            temp = lrelu(temp)
-            
-            # conv layer 5
-            temp = tf.layers.conv2d(temp, 128, 3, strides = 2, padding = 'SAME', name = 'CONV_5', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
-            temp = tf.layers.batch_normalization(temp, name = 'BN_5')
-            temp = lrelu(temp)
-            
-            # FC layer 1
-            fc_in = tf.contrib.layers.flatten(temp)
-            fc_out = tf.layers.dense(fc_in, units = 1024, activation = None)
-            fc_out = lrelu(fc_out)
-            
-            # FC layer 2
-            logits = tf.layers.dense(fc_out, units = 1, activation = None)
-            probability = tf.nn.sigmoid(logits)
-        return logits, probability
-    
+        self.d_var_texture = [x for x in variables if 'discriminator_texture' in x.name]
+        print("Completed building texture discriminator. Number of variables:",len(self.d_var_texture))
+        
+        d_loss_real_texture = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_texture, tf.ones_like(self.logits_dslr_texture)))
+        d_loss_fake_texture = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_enhanced_texture, tf.zeros_like(self.logits_enhanced_texture)))
+        
+        self.d_loss_texture = d_loss_real_texture + d_loss_fake_texture
+        self.D_optimizer_texture = tf.train.AdamOptimizer(self.config.learning_rate).minimize(self.d_loss_texture, var_list=self.d_var_texture)
+        
+    '''
     def pretrain_discriminator(self, load = True):
         if load == True:
             if self.load():
@@ -196,7 +139,7 @@ class WESPE(object):
                 self.test_discriminator(200)
         print("pretraining complete")
         self.save()
-    
+    '''
     def train(self, load = True):
         if load == True:
             if self.load():
@@ -209,18 +152,19 @@ class WESPE(object):
         for i in range(0, 100000):
             phone_batch, dslr_batch = get_batch(self.dataset_phone, self.dataset_dslr, self.config)
             _, enhanced_batch = self.sess.run([self.G_optimizer, self.enhanced_patch] , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
-            _ = self.sess.run(self.D_optimizer , feed_dict={self.phone_patch:enhanced_batch, self.dslr_patch:dslr_batch})
+            _ = self.sess.run(self.D_optimizer_color , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
+            _ = self.sess.run(self.D_optimizer_texture , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
             
             if i %1000 == 0:
                 phone_batch, dslr_batch = get_batch(self.dataset_phone, self.dataset_dslr, self.config)
                 #g_loss = self.sess.run(self.G_loss , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
                 g_loss, color_loss, texture_loss, content_loss, tv_loss = self.sess.run([self.G_loss, self.color_loss, self.texture_loss, self.content_loss, self.tv_loss] , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
-                print("Iteration %d, runtime: %.3f s, generator loss: %.6f" %(i, time.time()-start, g_loss))
-                print("Loss per component: color %.6f, texture %.6f, content %.6f, tv %.6f" %(color_loss, texture_loss, content_loss, tv_loss)) 
+                print("Iteration %d, runtime: %.3f s, generator loss: %.6f" %(i, time.time()-start, g_loss))      
+                print("Loss per component: content %.6f, color %.6f, texture %.6f, tv %.6f" %(content_loss, color_loss, texture_loss, tv_loss)) 
                 # during training, test for only patches (full image testing incurs memory issues...)
                 self.test_generator(200, 0)
                 self.save()
-  
+    '''
     def test_discriminator(self, test_num, load = False, mode = "phone_dslr"):
         if load == True:
             if self.load():
@@ -258,7 +202,7 @@ class WESPE(object):
             print("Dricriminator test accuracy: phone: %d/%d, dslr: %d/%d, enhanced: %d/%d" %(acc_phone, test_num, acc_dslr, test_num, acc_enhanced , test_num)) 
         else:
             print("Discriminator test accuracy: phone: %d/%d, dslr: %d/%d" %(acc_phone, test_num, acc_dslr, test_num))    
-        
+    '''
     def test_generator(self, test_num_patch = 200, test_num_image = 5, load = False):
         if load == True:
             if self.load():
@@ -268,7 +212,7 @@ class WESPE(object):
 
         # test for patches
         start = time.time()
-        self.test_discriminator(200, load = False, mode = "enhanced")
+        #self.test_discriminator(200, load = False, mode = "enhanced")
         test_list_phone = sorted(glob(self.config.test_path_phone_patch))
         test_list_dslr = sorted(glob(self.config.test_path_dslr_patch))
         PSNR_phone_enhanced_list = np.zeros([test_num_patch])

@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 import scipy.stats as st
 
-mean_RGB = np.array([123.68 ,  116.779,  103.939])
+mean_RGB = np.array([123.68, 116.779, 103.939])
 
 def preprocess(img):
     return (img - mean_RGB)/255 
