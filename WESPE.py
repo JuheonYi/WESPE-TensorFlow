@@ -64,7 +64,9 @@ class WESPE(object):
         self.reconstructed_patch = modules.generator_network(self.enhanced_patch, var_scope = 'generator_inverse')
         
         self.enhanced_test = modules.generator_network(self.phone_test, var_scope = 'generator')
+        self.reconstructed_test = modules.generator_network(self.enhanced_test, var_scope = 'generator_inverse')
         self.enhanced_test_unknown = modules.generator_network(self.phone_test_unknown, var_scope = 'generator')
+        self.reconstructed_test_unknown = modules.generator_network(self.enhanced_test_unknown, var_scope = 'generator_inverse')
         
         variables = tf.trainable_variables()
         self.g_var = [x for x in variables if 'generator' in x.name]
@@ -72,18 +74,20 @@ class WESPE(object):
         #print(self.g_var)
 
     def build_generator_loss(self):
-        # content loss (vgg)
+        # content loss (vgg feature distance between original & reconstructed)
         original_vgg = net(self.vgg_dir, self.phone_patch * 255)
         reconstructed_vgg = net(self.vgg_dir, self.reconstructed_patch * 255)
+        #original_vgg = net(self.vgg_dir, self.dslr_patch * 255)
+        #reconstructed_vgg = net(self.vgg_dir, self.enhanced_patch * 255)
         self.content_loss = tf.reduce_mean(tf.square(original_vgg[self.content_layer] - reconstructed_vgg[self.content_layer])) 
         
-        # color loss (gan)
+        # color loss (gan, enhanced-dslr)
         self.color_loss = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_color, self.logits_enhanced_color))
         
-        # texture loss (gan)
+        # texture loss (gan, enhanced-dslr)
         self.texture_loss = tf.reduce_mean(sigmoid_cross_entropy_with_logits(self.logits_dslr_texture, self.logits_enhanced_texture))
         
-        # tv loss (tv)
+        # tv loss (total variation of enhanced)
         self.tv_loss = tf.reduce_mean(tf.image.total_variation(self.enhanced_patch))
         
         # calculate generator loss as a weighted sum of the above 4 losses
@@ -91,10 +95,12 @@ class WESPE(object):
         self.G_optimizer = tf.train.AdamOptimizer(self.config.learning_rate).minimize(self.G_loss, var_list=self.g_var)
     
     def build_discriminator(self): 
-        self.logits_dslr_color, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        #self.logits_dslr_color, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        self.logits_dslr_color, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_color', preprocess = 'none')
         self.logits_dslr_texture, _ = modules.discriminator_network(self.dslr_patch, var_scope = 'discriminator_texture', preprocess = 'gray')
         
-        self.logits_enhanced_color, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        #self.logits_enhanced_color, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_color', preprocess = 'blur')
+        self.logits_enhanced_color, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_color', preprocess = 'none')
         self.logits_enhanced_texture, _ = modules.discriminator_network(self.enhanced_patch, var_scope = 'discriminator_texture', preprocess = 'gray')
         
         #_, self.prob = modules.discriminator_network(self.phone_test)
@@ -149,7 +155,7 @@ class WESPE(object):
         else:
             print(" Overall training starts from beginning")
         start = time.time()
-        for i in range(0, 100000):
+        for i in range(0, 20000):
             phone_batch, dslr_batch = get_batch(self.dataset_phone, self.dataset_dslr, self.config)
             _, enhanced_batch = self.sess.run([self.G_optimizer, self.enhanced_patch] , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
             _ = self.sess.run(self.D_optimizer_color , feed_dict={self.phone_patch:phone_batch, self.dslr_patch:dslr_batch})
@@ -215,6 +221,7 @@ class WESPE(object):
         #self.test_discriminator(200, load = False, mode = "enhanced")
         test_list_phone = sorted(glob(self.config.test_path_phone_patch))
         test_list_dslr = sorted(glob(self.config.test_path_dslr_patch))
+        PSNR_phone_reconstructed_list = np.zeros([test_num_patch])
         PSNR_phone_enhanced_list = np.zeros([test_num_patch])
         PSNR_dslr_enhanced_list = np.zeros([test_num_patch])
         indexes = []
@@ -223,11 +230,13 @@ class WESPE(object):
             indexes.append(index)
             test_patch_phone = preprocess(scipy.misc.imread(test_list_phone[index], mode = "RGB").astype("float32"))
             test_patch_dslr = preprocess(scipy.misc.imread(test_list_dslr[index], mode = "RGB").astype("float32"))
-            test_patch_enhanced = self.sess.run(self.enhanced_test , feed_dict={self.phone_test:[test_patch_phone], self.dslr_test:[test_patch_dslr]})
+            #test_patch_enhanced = self.sess.run(self.enhanced_test , feed_dict={self.phone_test:[test_patch_phone], self.dslr_test:[test_patch_dslr]})
+            test_patch_enhanced, test_patch_reconstructed = self.sess.run([self.enhanced_test, self.reconstructed_test] , feed_dict={self.phone_test:[test_patch_phone], self.dslr_test:[test_patch_dslr]})
             if i % 50 == 0:
                 imageio.imwrite(("./samples/%s/patch/phone_%d.png" %(self.config.dataset_name, i)), postprocess(test_patch_phone))
                 imageio.imwrite(("./samples/%s/patch/dslr_%d.png" %(self.config.dataset_name,i)), postprocess(test_patch_dslr))
                 imageio.imwrite(("./samples/%s/patch/enhanced_%d.png" %(self.config.dataset_name,i)), postprocess(test_patch_enhanced[0]))
+                imageio.imwrite(("./samples/%s/patch/reconstructed_%d.png" %(self.config.dataset_name,i)), postprocess(test_patch_reconstructed[0]))
             #print(enhanced_test_patch.shape)
             PSNR = calc_PSNR(postprocess(test_patch_enhanced[0]), postprocess(test_patch_phone))
             #print("PSNR: %.3f" %PSNR)
@@ -235,12 +244,16 @@ class WESPE(object):
             PSNR = calc_PSNR(postprocess(test_patch_enhanced[0]), postprocess(test_patch_dslr))
             #print("PSNR: %.3f" %PSNR)
             PSNR_dslr_enhanced_list[i] = PSNR
-        print("(runtime: %.3f s) Average test PSNR for %d random test image patches: phone-enhanced %.3f, dslr-enhanced %.3f" %(time.time()-start, test_num_patch, np.mean(PSNR_phone_enhanced_list), np.mean(PSNR_dslr_enhanced_list) ))
+            PSNR = calc_PSNR(postprocess(test_patch_reconstructed[0]), postprocess(test_patch_phone))
+            #print("PSNR: %.3f" %PSNR)
+            PSNR_phone_reconstructed_list[i] = PSNR
+        print("(runtime: %.3f s) Average test PSNR for %d random test image patches: phone-enhanced %.3f, phone-reconstructed %.3f, dslr-enhanced %.3f" %(time.time()-start, test_num_patch, np.mean(PSNR_phone_enhanced_list), np.mean(PSNR_phone_reconstructed_list),np.mean(PSNR_dslr_enhanced_list) ))
         
         # test for images
         start = time.time()
         test_list_phone = sorted(glob(self.config.test_path_phone_image))
         PSNR_phone_enhanced_list = np.zeros([test_num_image])
+        PSNR_phone_reconstructed_list = np.zeros([test_num_image])
         PSNR_dslr_enhanced_list = np.zeros([test_num_image])
         indexes = []
         for i in range(test_num_image):
@@ -248,14 +261,26 @@ class WESPE(object):
             index = i
             indexes.append(index)
             test_image_phone = preprocess(scipy.misc.imread(test_list_phone[index], mode = "RGB").astype("float32"))
+            '''
             test_image_enhanced = self.sess.run(self.enhanced_test_unknown , feed_dict={self.phone_test_unknown:[test_image_phone]})
             imageio.imwrite(("./samples/%s/image/phone_%d.png" %(self.config.dataset_name, i)), postprocess(test_image_phone))
             imageio.imwrite(("./samples/%s/image/enhanced_%d.png" %(self.config.dataset_name, i)), postprocess(test_image_enhanced[0]))
             PSNR = calc_PSNR(postprocess(test_image_enhanced[0]), postprocess(test_image_phone))
+            '''
+            test_image_enhanced, test_image_reconstructed = self.sess.run([self.enhanced_test_unknown, self.reconstructed_test_unknown] , feed_dict={self.phone_test_unknown:[test_image_phone]})
+            imageio.imwrite(("./samples/%s/image/phone_%d.png" %(self.config.dataset_name, i)), postprocess(test_image_phone))
+            imageio.imwrite(("./samples/%s/image/enhanced_%d.png" %(self.config.dataset_name, i)), postprocess(test_image_enhanced[0]))
+            imageio.imwrite(("./samples/%s/image/reconstructed_%d.png" %(self.config.dataset_name, i)), postprocess(test_image_reconstructed[0]))
+            PSNR = calc_PSNR(postprocess(test_image_enhanced[0]), postprocess(test_image_phone))
+            
             #print("PSNR: %.3f" %PSNR)
             PSNR_phone_enhanced_list[i] = PSNR
+            
+            PSNR = calc_PSNR(postprocess(test_image_reconstructed[0]), postprocess(test_image_phone))
+            PSNR_phone_reconstructed_list[i] = PSNR
         if test_num_image > 0:
-            print("(runtime: %.3f s) Average test PSNR for %d random full test images: phone-enhanced %.3f" %(time.time()-start, test_num_image, np.mean(PSNR_phone_enhanced_list)))
+            #print("(runtime: %.3f s) Average test PSNR for %d random full test images: phone-enhanced %.3f" %(time.time()-start, test_num_image, np.mean(PSNR_phone_enhanced_list)))
+            print("(runtime: %.3f s) Average test PSNR for %d random full test images: original-enhanced %.3f, original-reconstructed %.3f" %(time.time()-start, test_num_image, np.mean(PSNR_phone_enhanced_list), np.mean(PSNR_phone_reconstructed_list)))
 
     def save(self):
         model_name = self.config.model_name

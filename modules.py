@@ -48,9 +48,12 @@ def discriminator_network(image, var_scope = 'discriminator', preprocess = 'gray
             #convert to grayscale image
             print("Discriminator-texture")
             image_processed = tf.image.rgb_to_grayscale(image)
-        else:
-            print("Discriminator-color")
+        elif preprocess == 'blur':
+            print("Discriminator-color (blur)")
             image_processed = gaussian_blur(image)
+        else:
+            print("Discriminator-color (none)")
+            image_processed = image
             
         # conv layer 1 
         temp = tf.layers.conv2d(image_processed, 48, 11, strides = 4, padding = 'SAME', name = 'CONV_1', kernel_initializer = tf.contrib.layers.xavier_initializer(), reuse=tf.AUTO_REUSE)
