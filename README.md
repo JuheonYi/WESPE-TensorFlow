@@ -1,4 +1,4 @@
-# TensorFlow-WESPE (Ongoing as of 2018.9.1)
+# TensorFlow-WESPE (Ongoing as of 2018.9.7)
 TensorFlow implementation of WESPE [1]
 
 ## **How to run the code**
@@ -7,15 +7,15 @@ TensorFlow implementation of WESPE [1]
 
 ## **TODO list**
 - [x] Implement WESPE model
-- [x] Train WESPE under strong supervision with DPED dataset (WESPE 'DPED')
-- [ ] Implement weakly supervised dataloader for DPED & DIV2K
-- [ ] Train WESPE under weak supervision (WESPE 'DIV2K')
-- [ ] Implement Flickr Faves Score estimation network
-- [ ] Final evaluation (both qualitative & quantatative) on various datasets (DPED, KITTI, Cityscapes, and various smartphones)
+- [x] Train WESPE under strong supervision with DPED dataset (WESPE[DPED])
+- [x] Implement weakly supervised dataloader for DPED & DIV2K
+- [ ] Train WESPE under weak supervision (WESPE[DIV2K]) --> ongoing
+- [ ] Evaluation (both qualitative & quantatative) on various datasets (DPED, KITTI, Cityscapes, and various smartphones)
 
 ## **Training result**
 1. Training log 
-   - In WESPE-main.ipynb 
+   - Strong supervision: WESPE[DPED]-main.ipynb (test PSNR for iphone is about 17.5 dB, similar to the original paper, 18.11 dB)
+   - Weak supervision: WESPE[DIV2K]-main.ipynb
 2. Trained model
    - In "./result/" directory 
 3. Visual result (to be updated soon...) 
@@ -31,7 +31,10 @@ TensorFlow implementation of WESPE [1]
 2. WESPE[DPED] (strong supervision)
    - I used the 'relu_2_2' layer for content loss (using the ealry layers in VGG19 leads to better reconstruction performance)
    - Removed blurring for computing color loss
-   - Weights for each losses are configured as (w_content, w_color, w_texture, w_tv) = (0.1, 20, 3, 1/400). w_content should be small enough so that the generator focus more on enhancement rather than reconstruction. w_color seems to be the most important. w_texture also plays an important role in reducing unwanted artifacts in the generated image.
+   - Weights for each losses are configured as (w_content, w_color, w_texture, w_tv) = (0.1, 25, 3, 1/400). w_content should be small enough so that the generator focus more on enhancement rather than reconstruction. w_color seems to be the most important. w_texture also plays an important role in reducing unwanted artifacts in the generated image.
+   - Training seems to suffer from mode collapse (when trained wrong, enhanced image looks like negatively processed image). When Enhanced-Original PSNR seems to stay below 10 dB during training, stopped the training and started from beginning again. 
+3. WESPE[DIV2K] (weak supervision)
+
 
 ## **References**
 - [1] Andrey Ignatov, Nikolay Kobyshev, Radu Timofte, Kenneth Vanhoey and Luc Van Gool. "WESPE: Weakly Supervised Photo Enhancer for Digital Cameras," in IEEE International Conference on Computer Vision and Pattern Recognition Workshop (CVPRW), 2018.
