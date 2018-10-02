@@ -1,4 +1,4 @@
-# TensorFlow-WESPE (Ongoing as of 2018.9.7)
+# TensorFlow-WESPE (Ongoing as of 2018.10.2)
 TensorFlow implementation of WESPE [1]
 
 ## **How to run the code**
@@ -10,7 +10,6 @@ TensorFlow implementation of WESPE [1]
 - [x] Train WESPE under strong supervision with DPED dataset (WESPE[DPED])
 - [x] Implement weakly supervised dataloader for DPED & DIV2K
 - [ ] Train WESPE under weak supervision (WESPE[DIV2K]) --> ongoing
-- [ ] Evaluation (both qualitative & quantatative) on various datasets (DPED, KITTI, Cityscapes, and various smartphones)
 
 ## **Training result**
 1. Training log 
@@ -34,6 +33,7 @@ TensorFlow implementation of WESPE [1]
    - Weights for each losses are configured as (w_content, w_color, w_texture, w_tv) = (0.1, 25, 3, 1/400). w_content should be small enough so that the generator focus more on enhancement rather than reconstruction. w_color seems to be the most important. w_texture also plays an important role in reducing unwanted artifacts in the generated image.
    - Training seems to suffer from mode collapse (when trained wrong, enhanced image looks like negatively processed image). When Enhanced-Original PSNR seems to stay below 10 dB during training, stopped the training and started from beginning again. 
 3. WESPE[DIV2K] (weak supervision)
+   - In process of finding the right weight combinations...
 
 
 ## **References**
