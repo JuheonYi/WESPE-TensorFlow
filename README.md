@@ -1,5 +1,5 @@
 # TensorFlow-WESPE (Ongoing as of 2018.10.2)
-TensorFlow implementation of WESPE [1]
+TensorFlow implementation of "WESPE: Weakly Supervised Photo Enhancer for Digital Cameras" in CVPRW 2018 [1]
 
 ## **How to run the code**
 - In WESPE-main.ipynb (plan to add main.py soon)
