@@ -18,9 +18,9 @@ TensorFlow implementation of WESPE [1]
 2. Trained model
    - In "./result/" directory 
 3. Visual result (to be updated soon...) 
-   - WESPE in strong supervision (using DPED)
+   - WESPE[DPED]
 ![Example result](https://github.com/JuheonYi/images/blob/master/WESPE_strong.PNG)
-   - WESPE in weak supervision (using DIV2K)
+   - WESPE[DIV2K]
 
 ## **Modifications**
 1. Model architecture
